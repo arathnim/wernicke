@@ -44,6 +44,13 @@
              (progn ,@body)
              ,r))))
 
+;; programmer options
+;;  backtracking
+;;  value-returning
+;;  errors
+
+(defvar *settings* '(:backtracking nil :value-returning t :errors t))
+
 ;; 'interpreted' parsers, for dynamic calling at runtime
 ;; used as a fallback and for prototyping new parsers
 (defparameter interpreted-parsers (make-hash-table :test #'equalp))
@@ -87,12 +94,12 @@
           (*index* 0))
           (insert-compiled ,form)))
 
-;; programmer options
-;;  backtracking
-;;  value-returning
-;;  errors
+;; name -> (lambda-list body)
+(defparameter user-parsers (make-hash-table :test #'equalp))
 
-(defvar *settings* '(:backtracking nil :value-returning t :errors t))
+(defmacro defparser (name ll &rest body)
+  `(setf (gethash ',name user-parsers)
+         (list ,ll ,body)))
 
 ;; choice   ~ in the matching operation, returns the first form that consumes input
 ;; any      ~ matches zero or more of the next form
@@ -154,6 +161,10 @@
    (let* ((*index* *index*))
       (dynamic-run p)))
 
+(define-compiled-parser try (p)
+   `(let* ((*index* *index*))
+      ,(compile-parser p)))
+
 ;; any
 
 (define-parser any (p)
@@ -161,6 +172,13 @@
          (until (error? r))
          (collect r into result)
          (finally (return (merge-characters result)))))
+
+(define-compiled-parser any (p)
+   (with-gensyms (result list)
+      `(iter (for ,result = ,(compile-parser p))
+             (until (error? ,result))
+             (collect ,result into ,list)
+             (finally (return ,list)))))
 
 ;; many
 
@@ -170,11 +188,22 @@
          (collect r into result)
          (finally (return (if result (merge-characters result) (fail 'many nil))))))
 
+(define-compiled-parser many (p)
+   (with-gensyms (result list)
+      `(iter (for ,result = ,(compile-parser p))
+             (until (error? ,result))
+             (collect ,result into ,list)
+             (finally (return (if ,list ,list ,result))))))
+
+;; choice
+
 (define-parser choice (&rest parsers)
    (iter (for parser in parsers)
          (for parser-result = (dynamic-run parser))
          (on-success parser-result (leave parser-result))
          (finally (return (fail 'choice nil)))))
+
+;; times
 
 (define-parser times (n parser)
    (iter (repeat n)
@@ -182,6 +211,8 @@
          (on-failure parse-result (leave parse-result))
          (collect parse-result into list)
          (finally (return (merge-characters list)))))
+
+;; optional
 
 (define-parser optional (parser)
    (if (error? (dynamic-run (try parser)))
