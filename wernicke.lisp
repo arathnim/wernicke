@@ -1,6 +1,6 @@
 ;; (author *this-code*) => ("Dylan Ball" "Arathnim@gmail.com")
 
-(proclaim '(optimize (speed 0) (safety 3) (debug 3) (space 0)))
+(declaim (optimize (speed 3) (safety 0) (debug 0) (space 0)))
 (declaim #+sbcl(sb-ext:muffle-conditions style-warning))
 (ql:quickload '(alexandria iterate anaphora) :silent t)
 (defpackage wernicke
@@ -8,29 +8,14 @@
 
 (in-package wernicke)
 
-(defvar *source* nil)
+(declaim (string *source*))
+(defvar *source* "")
+
+(declaim (fixnum *source-length*))
+(defvar *source-length* 0)
+
+(declaim (fixnum *index*))
 (defvar *index* 0)
-
-(defstruct (source)
-   value
-   (cached-string "")
-   (max-index -1))
-
-(defun get-character (n)
-   (if (stringp (source-value *source*))
-       (char (source-value *source*) n)
-       (if (> n (source-max-index *source*))
-           (iter (until (eql (source-max-index *source*) n))
-                 (append-character (read-char (source-value *source*)))
-                 (finally (return (char (source-cached-string *source*) n))))
-           (char (source-cached-string *source*) n))))
-
-(defun append-character (c)
-   (setf (source-cached-string *source*)
-         (concatenate 'string
-            (source-cached-string *source*)
-            (string c)))
-   (incf (source-max-index *source*)))
 
 ;; error type and functions
 
@@ -38,10 +23,8 @@
 (defstruct (parser-error (:conc-name error-) (:predicate error?))
    type index args)
 
-(declaim (inline pass))
-(defun pass (value n)
-   (incf *index* n)
-   value)
+(defmacro pass (value n)
+   `(progn (incf *index* ,n) ,value))
 
 (declaim (inline fail))
 (defun fail (type args &optional (index *index*))
@@ -63,8 +46,10 @@
 
 ;; 'interpreted' parsers, for dynamic calling at runtime
 ;; used as a fallback and for prototyping new parsers
-
 (defparameter interpreted-parsers (make-hash-table :test #'equalp))
+
+;; parsers that serve as the first level of compilation, 
+;; generates code to be inserted by a macro
 (defparameter compiled-parsers (make-hash-table :test #'equalp))
 
 (defmacro define-parser (name ll &rest body)
@@ -88,15 +73,19 @@
 (defmacro insert-compiled (exp)
    (compile-parser exp))
 
-(defmacro parse (src form)
-  `(let ((*source* (make-source :value ,src))
-         (*index* 0))
-         (dynamic-run ',form)))
+(defmacro parse (string form)
+  `(let* ((*source* ,string)
+          (*source-length* 
+             ,(if (stringp string) (length string) '(length *source*)))
+          (*index* 0))
+          (dynamic-run ',form)))
 
-(defmacro compiled-parse (src form)
-  `(let ((*source* (make-source :value ,src))
-         (*index* 0))
-         (insert-compiled ,form)))
+(defmacro compiled-parse (string form)
+  `(let* ((*source* ,string)
+          (*source-length* 
+             ,(if (stringp string) (length string) '(length *source*)))
+          (*index* 0))
+          (insert-compiled ,form)))
 
 ;; programmer options
 ;;  backtracking
@@ -117,28 +106,27 @@
 ;; str      ~ explicitly matches a string
 ;; sep      ~ seperates by repeated matching. mostly magic
 
-(declaim (inline test-remaining))
-(defun test-remaining (n)
-   (if (stringp (source-value *source*))
-       (>= (length (source-value *source*)) (+ *index* n))
-       t))
+(defmacro test-remaining (n)
+  `(>= *source-length* (+ *index* ,n)))
 
 ;; char
 
 (define-parser chr (char)
    (if (test-remaining 1)
-       (if (eql (get-character *index*) char)
+       (if (eql (char *source* *index*) char)
            (pass char 1)
            (fail (string char) nil))
        (fail (string char) nil)))
 
 (define-compiled-parser chr (char)
-  (once-only (char)
-   `(if (test-remaining 1)
-        (if (eql (get-character *index*) ,char)
-            (pass ,char 1)
-            (fail (string ,char) nil))
-        (fail (string ,char) nil))))
+  (with-gensyms (genchar)
+   `(let ((,genchar ,char))
+      (declare (character ,genchar))
+      (if (test-remaining 1)
+         (if (eql (char *source* *index*) ,genchar)
+             (pass ,genchar 1)
+             (fail (string ,genchar) nil))
+         (fail (string ,genchar) nil)))))
 
 ;; str
 
@@ -149,11 +137,16 @@
          (finally (return string))))
 
 (define-compiled-parser str (string)
-   (once-only (string)
-     `(iter (for char in-string ,string)
-            (for parse-result = ,(compile-parser '(chr char)))
-            (on-failure parse-result (leave parse-result))
-            (finally (return ,string)))))
+   (with-gensyms (genstring length)
+     `(let* ((,genstring ,string) (,length (length ,genstring)))
+        (declare (string ,genstring) (fixnum ,length)) 
+        (if (test-remaining ,length)
+            (iter (for x from 0 below ,length)
+                  (declare (fixnum x))
+                  (unless (eql (char ,genstring x) (char *source* (+ *index* x)))
+                    (leave (fail 'expected (list ,genstring))))
+                  (finally (return (pass ,genstring ,length))))
+            (fail ,genstring nil)))))
 
 ;; try
 

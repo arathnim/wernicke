@@ -1,5 +1,4 @@
-# Wernicke
-## parsing framework for cl
+# Wernicke, a parsing framework for cl
 
 Wernicke is a framework made to ease development of parsing languages, such as regular expressions and Instaparse,
 by providing a highly optimized s-expression format to represent common parsing constructs.
