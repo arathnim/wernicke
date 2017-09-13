@@ -1,0 +1,9 @@
+Example languages
+	parmesan
+		better seq
+			left arrow binding
+			last form is normal code
+			heuristic guessing at implicit returns?
+		symbols for parsers with no args
+	simple regex
+	value-extracting regex

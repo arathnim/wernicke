@@ -1,12 +1,12 @@
-;; (author *this-code*) => (:name "Dylan Ball" :email "Arathnim@gmail.com")
+;; (author this-code) => (:name "Dylan Ball" :email "Arathnim@gmail.com")
 
-(declaim (optimize (speed 3) (safety 0) (debug 0) (space 0)))
+(declaim (optimize (speed 3) (safety 0) (debug 3) (space 0)))
 ;; (declaim #+sbcl(sb-ext:muffle-conditions style-warning))
 (ql:quickload '(alexandria iterate anaphora) :silent t)
 (defpackage wernicke (:use cl alexandria iterate anaphora))
-(defpackage wernicke-parsers)
-
 (in-package wernicke)
+
+;; data
 
 (declaim (string *source*))
 (defvar *source* "")
@@ -26,7 +26,7 @@
 (defmacro succeed (value offset)
   `(progn (incf *index* ,offset) ,value))
 
-(defmacro fail (data &optional (index *index*))
+(defmacro fail (data &optional (index '*index*))
   `(make-parser-error :data ,data :index ,index))
 
 (defmacro on-success (exp &rest body)
@@ -43,46 +43,23 @@
              (progn ,@body)
              ,r))))
 
-;; 'interpreted' parsers, for dynamic calling at runtime
-;; used as a fallback and for prototyping new parsers
-(defparameter interpreted-parsers (make-hash-table :test #'equalp))
+;; parsers
 
-;; parsers that serve as the first level of compilation,
-;; generates code to be inserted by a macro
-(defparameter compiled-parsers (make-hash-table :test #'equalp))
+(defparameter *parser-list* nil)
 
-(defmacro define-internal-parser (name ll &rest body)
-  `(setf (gethash ',name interpreted-parsers)
-         (defun ,name ,ll ,@body)))
-
-(defmacro define-compiled-parser (name ll &rest body)
-  `(setf (gethash ',name compiled-parsers)
-         (lambda ,ll ,@body)))
-
-(defmacro run-parser (data)
-	(if (and (listp data) (eq (car data) 'quote))
-		 (compile-parser (second data))
-		 (with-gensyms (foo)
-			`(let ((,foo ,data))
-				 (apply (car ,foo) (cdr ,foo))))))
-
-(defun compile-parser (exp)
-  (aif (and (listp exp) (gethash (car exp) compiled-parsers))
-       (apply it (cdr exp))
-       (error "unexpected form: ~a" exp)))
+(defmacro define-parser (name ll &rest body)
+  `(progn (defun ,name ,ll (lambda () ,@body))
+			 (defparameter ,name (function ,name))
+			 (push ',name *parser-list*)))
 
 (defmacro parse (string form)
   `(let* ((*source* ,string)
-          (*source-length*
-             ,(if (stringp string) (length string) '(length *source*)))
+          (*source-length* (length *source*))
           (*index* 0))
-          (run-parser ,form)))
+          (funcall ,form)))
 
-(defparameter user-parsers (make-hash-table :test #'equalp))
-
-(defmacro defparser (name ll &rest body)
-  `(setf (gethash ',name user-parsers)
-         (list ,ll ,body)))
+(defmacro defparser (name ll exp)
+	`(define-parser ,name ,ll (funcall ,exp)))
 
 ;; chr      ~ matches a single character
 ;; str      ~ explicitly matches a string
@@ -101,126 +78,82 @@
 (defmacro test-remaining (n)
   `(>= *source-length* (+ *index* ,n)))
 
-;; chr
-
-(define-internal-parser chr (char)
+(define-parser chr (char)
    (if (test-remaining 1)
        (if (eql (char *source* *index*) char)
            (succeed char 1)
            (fail (string char)))
        (fail (string char))))
 
-(define-compiled-parser chr (char)
-  (with-gensyms (genchar)
-   `(let ((,genchar ,char))
-      (declare (character ,genchar))
-      (if (test-remaining 1)
-         (if (eql (char *source* *index*) ,genchar)
-             (succeed ,genchar 1)
-             (fail (string ,genchar)))
-         (fail (string ,genchar))))))
-
-;; str
-
-(define-internal-parser str (string)
+(define-parser str (string)
    (iter (for char in-string string)
-         (for parse-result = (run-parser `(chr ,char)))
+         (for parse-result = (funcall (chr char)))
          (on-failure parse-result (leave parse-result))
          (finally (return string))))
 
-(define-compiled-parser str (string)
-   (with-gensyms (genstring length)
-     `(let* ((,genstring ,string) (,length (length ,genstring)))
-        (declare (string ,genstring) (fixnum ,length))
-        (if (test-remaining ,length)
-            (iter (for x from 0 below ,length)
-                  (declare (fixnum x))
-                  (unless (eql (char ,genstring x) (char *source* (+ *index* x)))
-                    (leave (fail `(expected ,,genstring))))
-                  (finally (return (succeed ,genstring ,length))))
-            (fail ,genstring)))))
+(define-parser one-of (string)
+	(if (test-remaining 1) 
+		 (iter (for char in-string string)
+			    (with c = (char *source* *index*))
+				 (if (eql c char)
+					  (leave (succeed char 1)))
+				 (finally (return (fail string))))
+		 (fail string)))
 
-;; try
+(define-parser none-of (string)
+	(if (test-remaining 1) 
+		 (iter (for char in-string string)
+			    (with c = (char *source* *index*))
+				 (if (eql c char)
+					  (leave (fail string)))
+				 (finally (return (succeed c 1))))
+		 (fail string)))
 
-(define-internal-parser try (p)
+(define-parser try (p)
    (let* ((*index* *index*))
-      (run-parser p)))
+      (funcall p)))
 
-(define-compiled-parser try (p)
-  `(let* ((*index* *index*))
-      ,(compile-parser p)))
-
-;; any
-
-(define-internal-parser any (p)
-   (iter (for r = (run-parser p))
+(define-parser any (p)
+   (iter (for r = (funcall p))
          (until (error? r))
          (collect r into result)
          (finally (return result))))
 
-(define-compiled-parser any (p)
-   (with-gensyms (result list)
-      `(iter (for ,result = ,(compile-parser p))
-             (until (error? ,result))
-             (collect ,result into ,list)
-             (finally (return ,list)))))
-
-;; many
-
-(define-internal-parser many (p)
-   (iter (for r = (run-parser p))
+(define-parser many (p)
+   (iter (for r = (funcall p))
          (until (error? r))
          (collect r into result)
          (finally (return (or result (fail 'many))))))
 
-(define-compiled-parser many (p)
-   (with-gensyms (result list)
-      `(iter (for ,result = ,(compile-parser p))
-             (until (error? ,result))
-             (collect ,result into ,list)
-             (finally (return (or ,list ,result))))))
-
-;; choice
-
-(define-internal-parser choice (&rest parsers)
+(define-parser choice (&rest parsers)
    (iter (for parser in parsers)
-         (for parser-result = (run-parser parser))
+         (for parser-result = (funcall parser))
          (on-success parser-result (leave parser-result))
          (finally (return (fail 'choice)))))
 
-(define-compiled-parser choice (p &rest rest)
-	(if rest
-	  (with-gensyms (result)
-		`(let ((,result ,(compile-parser p)))
-			(if (error? ,result)
-				,(compile-parser `(choice ,@rest))
-				,result)))	  
-     (with-gensyms (result)
-		`(let ((,result ,(compile-parser p)))
-			(if (error? ,result)
-				 (fail 'choice)
-				,result)))))
+(define-parser seq (&rest parsers)
+   (iter (for parser in parsers)
+         (for parser-result = (funcall parser))
+         (on-failure parser-result (leave parser-result))
+			(collect parser-result)))
 
-;; times
-
-(define-internal-parser times (n parser)
+(define-parser times (n parser)
    (iter (repeat n)
-         (for parse-result = (run-parser parser))
+         (for parse-result = (funcall parser))
          (on-failure parse-result (leave parse-result))
          (collect parse-result into list)
          (finally (return list))))
 
-(define-compiled-parser times (n parser)
-   (iter (repeat n)
-         (for parse-result = (run-parser parser))
-         (on-failure parse-result (leave parse-result))
-         (collect parse-result into list)
-         (finally (return list))))
-
-;; optional
-
-(define-internal-parser optional (parser)
-   (if (error? (run-parser (try parser)))
+(define-parser optional (parser)
+   (if (error? (funcall (try parser)))
        nil
-       (run-parser parser)))
+       (funcall parser)))
 
+(define-parser range (a b)
+	(if (test-remaining 1)
+		 (iter (for c from (char-code a) to (char-code b))
+				 (with char = (char *source* *index*))
+			    (if (eql char (code-char c)) 
+					  (leave (succeed char 1)))
+				 (finally (return (fail (list a b)))))
+		 (fail (list a b))))
