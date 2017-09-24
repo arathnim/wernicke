@@ -53,7 +53,7 @@
 
 (defparameter *parser-list* nil)
 
-(defparameter *run-hooks* nil)
+(defvar *run-hooks* nil)
 
 (defmacro define-parser (name ll &rest body)
   `(progn (defun ,name ,ll (lambda () ,@body))
@@ -63,10 +63,10 @@
   `(let* ((*source* ,string)
           (*source-length* (length *source*))
           (*index* 0))
-          (funcall ,form)))
+          (run-parser ,form)))
 
 (defmacro defparser (name ll exp)
-   `(define-parser ,name ,ll (funcall ,exp)))
+   `(define-parser ,name ,ll (run-parser ,exp)))
 
 (declaim (inline run-parser))
 (defun run-parser (p)
