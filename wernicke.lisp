@@ -1,6 +1,6 @@
 ;; (author this-code) => (:name "Dylan Ball" :email "Arathnim@gmail.com")
 
-(declaim (optimize (speed 3) (safety 0) (debug 3) (space 0)))
+(declaim (optimize (speed 3) (safety 1) (debug 2) (space 0)))
 
 (ql:quickload '(alexandria iterate anaphora) :silent t)
 

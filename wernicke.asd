@@ -3,6 +3,6 @@
 	:version "0.1"
 	:author "Dylan Ball <arathnim@gmail.com>"
 	:maintainer "Dylan Ball <arathnim@gmail.com>"
-	:description "parsing framework"
+	:description "generalized parsing framework"
 	:depends-on (alexandria iterate anaphora)
 	:components ((:file "wernicke")))
