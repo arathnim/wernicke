@@ -5,10 +5,10 @@
 (ql:quickload '(alexandria iterate anaphora) :silent t)
 
 (defpackage wernicke 
-	(:use cl alexandria iterate anaphora)
-	(:export "DEFPARSER" "PARSE" "CHR" "STR" "ONE-OF" "NONE-OF" 
-		"ANY" "MANY" "SEQ" "CHOICE" "RANGE" "TRY" "OPTIONAL" "TIMES"
-		"*RUN-HOOKS*"))
+   (:use cl alexandria iterate anaphora)
+   (:export "DEFPARSER" "PARSE" "CHR" "STR" "ONE-OF" "NONE-OF" 
+      "ANY" "MANY" "SEQ" "CHOICE" "RANGE" "TRY" "OPTIONAL" "TIMES"
+      "*RUN-HOOKS*"))
 
 (in-package wernicke)
 
@@ -57,7 +57,7 @@
 
 (defmacro define-parser (name ll &rest body)
   `(progn (defun ,name ,ll (lambda () ,@body))
-			 (push ',name *parser-list*)))
+          (push ',name *parser-list*)))
 
 (defmacro parse (string form)
   `(let* ((*source* ,string)
@@ -66,12 +66,12 @@
           (funcall ,form)))
 
 (defmacro defparser (name ll exp)
-	`(define-parser ,name ,ll (funcall ,exp)))
+   `(define-parser ,name ,ll (funcall ,exp)))
 
 (declaim (inline run-parser))
 (defun run-parser (p)
-	(iter (for h in *run-hooks*) (setf p (funcall h p)))
-	(funcall p))
+   (iter (for h in *run-hooks*) (setf p (funcall h p)))
+   (funcall p))
 
 ;; chr      ~ matches a single character
 ;; str      ~ explicitly matches a string
@@ -104,22 +104,22 @@
          (finally (return string))))
 
 (define-parser one-of (string)
-	(if (test-remaining 1) 
-		 (iter (for char in-string string)
-			    (with c = (char *source* *index*))
-				 (if (eql c char)
-					  (leave (succeed char 1)))
-				 (finally (return (fail string))))
-		 (fail string)))
+   (if (test-remaining 1) 
+       (iter (for char in-string string)
+             (with c = (char *source* *index*))
+             (if (eql c char)
+                 (leave (succeed char 1)))
+             (finally (return (fail string))))
+       (fail string)))
 
 (define-parser none-of (string)
-	(if (test-remaining 1) 
-		 (iter (for char in-string string)
-			    (with c = (char *source* *index*))
-				 (if (eql c char)
-					  (leave (fail string)))
-				 (finally (return (succeed c 1))))
-		 (fail string)))
+   (if (test-remaining 1) 
+       (iter (for char in-string string)
+             (with c = (char *source* *index*))
+             (if (eql c char)
+                 (leave (fail string)))
+             (finally (return (succeed c 1))))
+       (fail string)))
 
 (define-parser try (p)
    (let* ((*index* *index*))
@@ -147,7 +147,7 @@
    (iter (for parser in parsers)
          (for parser-result = (run-parser parser))
          (on-failure parser-result (leave parser-result))
-			(collect parser-result)))
+         (collect parser-result)))
 
 (define-parser times (n parser)
    (iter (repeat n)
@@ -162,10 +162,10 @@
        (run-parser parser)))
 
 (define-parser range (a b)
-	(if (test-remaining 1)
-		 (iter (for c from (char-code a) to (char-code b))
-				 (with char = (char *source* *index*))
-			    (if (eql char (code-char c)) 
-					  (leave (succeed char 1)))
-				 (finally (return (fail (list a b)))))
-		 (fail (list a b))))
+   (if (test-remaining 1)
+       (iter (for c from (char-code a) to (char-code b))
+             (with char = (char *source* *index*))
+             (if (eql char (code-char c)) 
+                 (leave (succeed char 1)))
+             (finally (return (fail (list a b)))))
+       (fail (list a b))))
